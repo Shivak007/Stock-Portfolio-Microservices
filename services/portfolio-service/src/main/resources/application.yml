@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: portfolio-service
+  config:
+    import: optional:configserver:http://localhost:8888
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/portfolio_db}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+rabbitmq:
+  exchange: ${RABBITMQ_EXCHANGE:portfolio.exchange}
+  queue: ${RABBITMQ_QUEUE:portfolio.queue}
+  routing-key: ${RABBITMQ_ROUTING_KEY:portfolio.routing.key}
+
+server:
+  port: ${SERVER_PORT:8083}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
