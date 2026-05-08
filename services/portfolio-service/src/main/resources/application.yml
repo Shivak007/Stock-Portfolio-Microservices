@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: portfolio-service
+  config:
+    import: optional:configserver:http://localhost:8888
+  datasource:
+    url: jdbc:mysql://localhost:3306/portfolio_db
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  cloud:
+    openfeign:
+      circuitbreaker:
+        enabled: true
+
+rabbitmq:
+  exchange: portfolio.exchange
+  queue: portfolio.queue
+  routing-key: portfolio.routing.key
+
+server:
+  port: 8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
