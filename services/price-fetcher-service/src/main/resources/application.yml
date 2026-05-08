@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: price-fetcher-service
+  config:
+    import: optional:configserver:http://localhost:8888   # won't crash if config server absent
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/price_db
+    username: root
+    password: ${SQL_PASS}                  # change to your local MySQL password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000
+
+server:
+  port: 8084
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+  instance:
+    prefer-ip-address: true
+
+price:
+  fetch:
+    interval: 300000
+  external:
+    api-key: ${FINNHUB_API_KEY:demo}
+    base-url: https://finnhub.io/api/v1/quote
+
+logging:
+  level:
+    com.portfolio.pricefetcher: DEBUG
