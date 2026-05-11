@@ -1,0 +1,67 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: notification-service
+  config:
+    import: optional:configserver:http://localhost:8888
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/notif_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: ${SQL_PASS:demo}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MY_EMAIL_ID:demo}
+    password: ${MY_EMAIL_PASS:demo}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka
+  instance:
+    prefer-ip-address: true
+
+rabbitmq:
+  exchange: portfolio.exchange
+  dlx: portfolio.dlx
+  queues:
+    notification: notification.queue
+    dlq: notification.dlq
+  routing-keys:
+    user-registered: user.registered
+    alert-triggered: alert.triggered
+    daily-summary: report.daily_summary
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.portfolio.notification: DEBUG
+    org.springframework.amqp: INFO
