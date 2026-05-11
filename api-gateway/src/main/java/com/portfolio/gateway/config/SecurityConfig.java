@@ -8,14 +8,18 @@ import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+
 import javax.crypto.spec.SecretKeySpec;
 
 @Configuration
 @EnableWebFluxSecurity
 public class SecurityConfig {
 
-    @Value("${app.jwt.secret}")
-    private String jwtSecret;
+    private final String jwtSecret;
+
+    public SecurityConfig(@Value("${app.jwt.secret}") String jwtSecret) {
+        this.jwtSecret = jwtSecret;
+    }
 
     @Bean
     public ReactiveJwtDecoder jwtDecoder() {
@@ -28,8 +32,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityWebFilterChain springSecurityFilterChain(
-            ServerHttpSecurity http) {
+    public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(exchanges -> exchanges
@@ -38,7 +41,11 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/refresh",
                                 "/oauth2/**",
-                                "/actuator/**"
+                                "/actuator/**",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html",
+                                "/*/v3/api-docs/**"
                         ).permitAll()
                         .anyExchange().authenticated()
                 )
