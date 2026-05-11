@@ -14,16 +14,19 @@ public class PriceEventPublisher {
 
     private final RabbitTemplate rabbitTemplate;
 
-    public void publishPriceUpdated(PriceUpdatedEvent event) {
-        try {
-            rabbitTemplate.convertAndSend(
-                    AppConstants.EXCHANGE_NAME,
-                    AppConstants.ROUTING_KEY_PRICE_UPDATED,
-                    event
-            );
-            log.debug("Published PriceUpdated event for symbol: {}", event.getSymbol());
-        } catch (Exception e) {
-            log.error("Failed to publish PriceUpdated event for {}: {}", event.getSymbol(), e.getMessage());
-        }
+    public void publishPriceUpdated(
+            PriceUpdatedEvent event
+    ) {
+
+        rabbitTemplate.convertAndSend(
+                AppConstants.EXCHANGE_NAME,
+                AppConstants.ROUTING_KEY_PRICE_UPDATED,
+                event
+        );
+
+        log.info(
+                "Published PriceUpdated event for symbol: {}",
+                event.getSymbol()
+        );
     }
 }

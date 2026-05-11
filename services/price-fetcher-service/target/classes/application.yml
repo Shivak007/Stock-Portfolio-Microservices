@@ -48,3 +48,18 @@ price:
 logging:
   level:
     com.portfolio.pricefetcher: DEBUG
+
+resilience4j:
+  retry:
+    instances:
+      finnhubRetry:
+        max-attempts: 3
+        wait-duration: 2s
+
+  circuitbreaker:
+    instances:
+      finnhubCircuitBreaker:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s

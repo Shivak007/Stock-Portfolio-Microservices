@@ -1,6 +1,9 @@
 package com.portfolio.pricefetcher.client;
 
+import com.portfolio.pricefetcher.exception.custom.ExternalApiException;
+import com.portfolio.pricefetcher.exception.custom.InvalidExternalResponseException;
 import com.portfolio.pricefetcher.dto.response.PriceResponseDto;
+import com.portfolio.pricefetcher.exception.custom.ExternalServiceException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,12 +11,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
-
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Map;
+import com.portfolio.pricefetcher.util.SymbolUtils;
 
 @Component
 @RequiredArgsConstructor
@@ -31,9 +36,11 @@ public class FinnhubClient {
     /**
      * Fetch real-time stock price from Finnhub.
      */
+    @Retry(name = "finnhubRetry", fallbackMethod = "fallbackPrice")
+    @CircuitBreaker(name = "finnhubCircuitBreaker", fallbackMethod = "fallbackPrice")
     public PriceResponseDto fetchPrice(String symbol) {
 
-        String normalizedSymbol = symbol.toUpperCase();
+        String normalizedSymbol = SymbolUtils.normalize(symbol);
 
         String url = UriComponentsBuilder
                 .fromHttpUrl(baseUrl)
@@ -75,22 +82,35 @@ public class FinnhubClient {
 
             log.error("Finnhub API error for {} : {}", normalizedSymbol, e.getMessage());
 
-            throw new RuntimeException(
+            throw new ExternalApiException(
                     "Failed to fetch stock price from Finnhub for symbol: "
-                            + normalizedSymbol
+                            + normalizedSymbol,
+                    e
             );
 
         } catch (Exception e) {
 
             log.error("Unexpected error while fetching {} : {}", normalizedSymbol, e.getMessage());
 
-            throw new RuntimeException(
+            throw new ExternalApiException(
                     "Unexpected error while fetching stock price for symbol: "
-                            + normalizedSymbol
+                            + normalizedSymbol,
+                    e
             );
         }
     }
+    public PriceResponseDto fallbackPrice(String symbol, Exception ex) {
 
+        log.warn(
+                "Fallback triggered for symbol {} due to: {}",
+                symbol,
+                ex.getMessage()
+        );
+
+        throw new ExternalServiceException(
+                "Finnhub temporarily unavailable for symbol: " + symbol
+        );
+    }
     /**
      * Validate Finnhub response.
      */
@@ -98,7 +118,7 @@ public class FinnhubClient {
 
         if (response == null || !response.containsKey("c")) {
 
-            throw new RuntimeException(
+            throw new InvalidExternalResponseException(
                     "Invalid response received from Finnhub for symbol: "
                             + symbol
             );
@@ -109,7 +129,7 @@ public class FinnhubClient {
 
         if (currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
 
-            throw new RuntimeException(
+            throw new InvalidExternalResponseException(
                     "Finnhub returned invalid stock price for symbol: "
                             + symbol
             );

@@ -21,13 +21,16 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import java.util.concurrent.CompletableFuture;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Qualifier;
+import java.util.concurrent.Executor;
+import com.portfolio.pricefetcher.util.SymbolUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -47,10 +50,13 @@ public class PriceServiceImpl implements PriceService {
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
 
+    @Qualifier("priceTaskExecutor")
+    private final Executor priceTaskExecutor;
+
     @Override
     public PriceResponseDto getPrice(String symbol) {
 
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = SymbolUtils.normalize(symbol);
         PriceResponseDto cachedPrice = getCachedPrice(normalizedSymbol);
 
         if (cachedPrice != null) {
@@ -62,20 +68,42 @@ public class PriceServiceImpl implements PriceService {
         cacheMisses.incrementAndGet();
         log.debug("Cache MISS for symbol: {}. Fetching from external API.", normalizedSymbol);
 
-        PriceResponseDto priceDto =
-                finnhubClient.fetchPrice(normalizedSymbol);
+        try {
 
-        persistToDb(priceDto);
-        putCachedPrice(normalizedSymbol, priceDto);
+            PriceResponseDto priceDto =
+                    finnhubClient.fetchPrice(normalizedSymbol);
 
-        return priceDto;
+            persistToDb(priceDto);
+
+            putCachedPrice(normalizedSymbol, priceDto);
+
+            return priceDto;
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "Live fetch failed for {}. Attempting stale fallback.",
+                    normalizedSymbol
+            );
+
+            return getStalePriceFallback(normalizedSymbol);
+        }
     }
 
     @Override
     public List<PriceResponseDto> getBatchPrices(List<String> symbols) {
 
-        return symbols.stream()
-                .map(this::getPrice)
+        List<CompletableFuture<PriceResponseDto>> futures = symbols.stream()
+                .map(symbol ->
+                        CompletableFuture.supplyAsync(
+                                () -> getPrice(symbol),
+                                priceTaskExecutor
+                        )
+                )
+                .toList();
+
+        return futures.stream()
+                .map(CompletableFuture::join)
                 .collect(Collectors.toList());
     }
 
@@ -83,7 +111,7 @@ public class PriceServiceImpl implements PriceService {
     @Transactional
     public PriceResponseDto forceRefresh(String symbol) {
 
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = SymbolUtils.normalize(symbol);
 
         log.info("Force-refreshing price for symbol: {}", normalizedSymbol);
 
@@ -93,15 +121,27 @@ public class PriceServiceImpl implements PriceService {
         persistToDb(priceDto);
         putCachedPrice(normalizedSymbol, priceDto);
 
-        publishPriceUpdatedEvent(priceDto);
+        try {
+
+            publishPriceUpdatedEvent(priceDto);
+
+        } catch (Exception e) {
+
+            log.error(
+                    "Event publish failed after DB persistence for symbol {}",
+                    normalizedSymbol,
+                    e
+            );
+        }
 
         return priceDto;
+
     }
 
     @Override
     public List<PriceResponseDto> getPriceHistory(String symbol, int days) {
 
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = SymbolUtils.normalize(symbol);
 
         List<PriceHistory> history =
                 priceHistoryRepository.findRecentBySymbol(
@@ -153,6 +193,7 @@ public class PriceServiceImpl implements PriceService {
         List<String> symbols =
                 portfolioFeignClient.getAllActiveSymbols();
 
+
         if (symbols.isEmpty()) {
             log.warn("Cron: No active symbols returned from portfolio-service.");
             return;
@@ -160,33 +201,41 @@ public class PriceServiceImpl implements PriceService {
 
         log.info("Cron: Refreshing {} symbols", symbols.size());
 
-        for (String symbol : symbols) {
+        List<CompletableFuture<Void>> futures = symbols.stream()
+                .map(symbol ->
+                        CompletableFuture.runAsync(() -> {
 
-            try {
+                            try {
 
-                PriceResponseDto priceDto =
-                        forceRefresh(symbol);
+                                PriceResponseDto priceDto =
+                                        forceRefresh(symbol);
 
-                log.debug(
-                        "Cron: Updated price for {}: {}",
-                        symbol,
-                        priceDto.getCurrentPrice()
-                );
+                                log.debug(
+                                        "Cron: Updated price for {}: {}",
+                                        symbol,
+                                        priceDto.getCurrentPrice()
+                                );
 
-            } catch (Exception e) {
+                            } catch (Exception e) {
 
-                log.error(
-                        "Cron: Failed to refresh price for {}: {}",
-                        symbol,
-                        e.getMessage()
-                );
-            }
-        }
+                                log.error(
+                                        "Cron: Failed to refresh price for {}: {}",
+                                        symbol,
+                                        e.getMessage()
+                                );
+                            }
+
+                        }, priceTaskExecutor)
+                )
+                .toList();
+
+        CompletableFuture.allOf(
+                futures.toArray(new CompletableFuture[0])
+        ).join();
 
         log.info("Cron: Price refresh complete.");
     }
 
-    // ─────────────────────────────────────────────────────────────────────
 
     @Transactional
     protected void persistToDb(PriceResponseDto dto) {
@@ -259,13 +308,6 @@ public class PriceServiceImpl implements PriceService {
         priceEventPublisher.publishPriceUpdated(event);
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null || symbol.trim().isEmpty()) {
-            throw new IllegalArgumentException("Symbol must not be blank");
-        }
-        return symbol.trim().toUpperCase();
-    }
-
     private PriceResponseDto getCachedPrice(String symbol) {
         Cache cache = cacheManager.getCache(STOCK_PRICES_CACHE_NAME);
         if (cache == null) {
@@ -295,6 +337,33 @@ public class PriceServiceImpl implements PriceService {
                 .updatedAt(dto.getUpdatedAt())
                 .fromCache(fromCache)
                 .build();
+    }
+
+    private PriceResponseDto getStalePriceFallback(String symbol) {
+
+        return priceCacheRepository.findBySymbol(symbol)
+                .map(entity -> {
+
+                    log.warn(
+                            "Returning stale cached DB price for {}",
+                            symbol
+                    );
+
+                    return PriceResponseDto.builder()
+                            .symbol(entity.getSymbol())
+                            .currentPrice(entity.getCurrentPrice())
+                            .previousPrice(entity.getPreviousPrice())
+                            .changePercent(entity.getChangePercent())
+                            .updatedAt(entity.getUpdatedAt())
+                            .fromCache(true)
+                            .build();
+                })
+                .orElseThrow(() ->
+                        new RuntimeException(
+                                "No cached fallback price available for symbol: "
+                                        + symbol
+                        )
+                );
     }
 
     private long countCachedSymbols() {

@@ -6,7 +6,15 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "price_cache")
+@Table(
+        name = "price_cache",
+        indexes = {
+                @Index(
+                        name = "idx_price_cache_symbol",
+                        columnList = "symbol"
+                )
+        }
+)
 @Data
 @Builder
 @NoArgsConstructor
