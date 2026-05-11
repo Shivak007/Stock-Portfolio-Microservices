@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: report-service
+
+  config:
+    import: optional:configserver:http://localhost:8888
+
+  cloud:
+    config:
+      import-check:
+        enabled: false
+
+server:
+  port: 8087
