@@ -5,6 +5,7 @@ import com.portfolio.auth.dto.*;
 import com.portfolio.auth.entity.RefreshToken;
 import com.portfolio.auth.entity.Role;
 import com.portfolio.auth.entity.User;
+import com.portfolio.auth.enums.AuthProvider;
 import com.portfolio.auth.repository.RefreshTokenRepository;
 import com.portfolio.auth.repository.UserRepository;
 import com.portfolio.auth.response.ApiResponse;
@@ -13,6 +14,10 @@ import org.springframework.stereotype.Service;
 
 import com.portfolio.auth.dto.LogoutRequestDto;
 
+import com.portfolio.auth.messaging.UserEventPublisher;
+import com.portfolio.auth.messaging.UserRegisteredEvent;
+
+import com.portfolio.auth.service.JwtBlacklistService;
 
 import java.time.LocalDateTime;
 import java.util.Set;
@@ -25,16 +30,22 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final JwtBlacklistService jwtBlacklistService;
+    private final UserEventPublisher userEventPublisher;
 
     public AuthServiceImpl(UserRepository userRepository,
                            JwtUtil jwtUtil,
                            PasswordEncoder passwordEncoder,
-                           RefreshTokenRepository refreshTokenRepository) {
+                           RefreshTokenRepository refreshTokenRepository,
+                           JwtBlacklistService jwtBlacklistService,
+                           UserEventPublisher userEventPublisher) {
 
         this.userRepository = userRepository;
         this.jwtUtil = jwtUtil;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.jwtBlacklistService = jwtBlacklistService;
+        this.userEventPublisher = userEventPublisher;
     }
 
     @Override
@@ -54,8 +65,18 @@ public class AuthServiceImpl implements AuthService {
 
         // Default role
         user.setRole(Role.USER);
+        user.setProvider(AuthProvider.LOCAL);
 
-        userRepository.save(user);
+        User savedUser = userRepository.save(user);
+
+        UserRegisteredEvent event =
+                new UserRegisteredEvent(
+                        savedUser.getId(),
+                        savedUser.getEmail(),
+                        savedUser.getRole().name()
+                );
+
+        userEventPublisher.publishUserRegisteredEvent(event);
 
         return new ApiResponse<>(true, "User registered successfully", null);
     }
@@ -202,10 +223,36 @@ public class AuthServiceImpl implements AuthService {
 
         RefreshToken refreshToken = refreshTokenOpt.get();
 
-        // Revoke token
+        // Revoke refresh token
         refreshToken.setRevoked(true);
 
         refreshTokenRepository.save(refreshToken);
+
+        try {
+
+            String authHeader =
+                    org.springframework.security.core.context.SecurityContextHolder
+                            .getContext()
+                            .getAuthentication()
+                            .getCredentials()
+                            .toString();
+
+            String token = authHeader.replace("Bearer ", "");
+
+            // Extract jti
+            String jti = jwtUtil.extractJti(token);
+
+            // Remaining expiry time
+            long remainingTime =
+                    jwtUtil.getRemainingValidity(token);
+
+            // Blacklist token
+            jwtBlacklistService.blacklistToken(jti, remainingTime);
+
+        } catch (Exception e) {
+
+            System.out.println("JWT blacklist failed: " + e.getMessage());
+        }
 
         return new ApiResponse<>(
                 true,
